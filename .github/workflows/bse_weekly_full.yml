@@ -1,7 +1,8 @@
-name: BSE Weekly Full Rebuild
+name: BSE Weekly Dividend Run
 
-# The daily run rebuilds only the CURRENT period file. Older period files hold prices adjusted for events that were known when they were
-# last built, so once a week every period file is rebuilt (history buckets are always kept current by the daily run).
+# Once a week: apply cash dividends up to today and refresh every period file in R2.
+# During the week dividends wait, so a dividend does not rewrite the history buckets every day (fewer R2 writes).
+# Files whose content did not change are not uploaded.
 
 on:
   schedule:
@@ -13,16 +14,18 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  rebuild:
+  weekly:
     runs-on: ubuntu-latest
     timeout-minutes: 300
+    permissions:
+      contents: write
     env:
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
       R2_BUCKET: nse-stock-data
       PERIOD_MODE: year
-      FORCE_ALL: 'true'
+      WEEKLY: 'true'
       PYTHONUNBUFFERED: '1'
     steps:
       - uses: actions/checkout@v4
@@ -32,4 +35,15 @@ jobs:
       - run: |
           python -m pip install --upgrade pip
           pip install pandas numpy pyarrow boto3 requests
+      - run: python backend/actions.py --live
+        continue-on-error: true
       - run: python backend/build.py
+      - name: Save build state
+        if: ${{ !cancelled() }}
+        run: |
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "actions@github.com"
+          git add data/build_state.json data/factors_cache.csv data/corporate_actions || true
+          git commit -m "BSE weekly build state" || exit 0
+          git pull --rebase origin main
+          git push origin main

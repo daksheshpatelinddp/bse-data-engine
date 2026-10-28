@@ -1,7 +1,9 @@
 name: Daily BSE Fetcher
 
-# Downloads BSE's bhavcopy (raw prices -> R2: bse/raw/), reads corporate events, then builds the adjusted files the web engine reads
-# (R2: bse/<year>.parquet, bse/h/.., bse/p/.., bse/manifest.json, bse/recent.json). Nothing big is committed to git.
+# 1. downloads BSE's bhavcopy -> RAW prices committed to git as small files (data/raw/<year>/<yyyy-mm>.parquet, never near 100 MB)
+# 2. reads corporate events (BSE list)
+# 3. builds the ADJUSTED files and uploads only those to R2 (bse/<year>.parquet, bse/h/.., bse/p/.., manifest, recent pack)
+# A normal day writes about 3 files to R2. Raw prices never go to R2.
 
 on:
   schedule:
@@ -17,36 +19,38 @@ on:
         required: false
         default: ''
       probe:
-        description: 'Only test which BSE file types exist for sample dates 2000-today (changes nothing). Run this FIRST.'
+        description: 'Only test which BSE file types exist for sample dates (changes nothing)'
         type: boolean
         default: false
       ca_backfill_from:
         description: 'One-off: download BSE corporate-action history from this year (e.g. 2007) into data/corporate_actions/bse_live.csv'
         required: false
         default: ''
+      weekly_run:
+        description: 'Apply cash dividends up to today and refresh every period file in R2 (the Sunday workflow does this too)'
+        type: boolean
+        default: false
       recompute_factors:
         description: 'Recompute every adjustment factor from the raw prices (normally leave unticked)'
         type: boolean
         default: false
       force_all:
-        description: 'Rebuild EVERY period file and history bucket (normally leave unticked)'
+        description: 'Rebuild and re-upload EVERYTHING in R2 (normally leave unticked)'
         type: boolean
         default: false
 
 concurrency:
-  group: bse-r2                  # never two BSE runs writing to R2 at the same time
+  group: bse-r2                  # never two BSE runs at the same time
   cancel-in-progress: false
 
 jobs:
   bse:
     runs-on: ubuntu-latest
     timeout-minutes: 350
+    permissions:
+      contents: write
     env:
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-      R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
-      R2_BUCKET: nse-stock-data
-      PERIOD_MODE: year          # year -> bse/2026.parquet (like NSE).  half -> bse/2026_H1.parquet  (do not change after the first run without a full rebuild)
+      PERIOD_MODE: year          # year -> bse/2026.parquet (like NSE).  half -> bse/2026_H1.parquet  (do not change after the first run without FORCE_ALL)
       PYTHONUNBUFFERED: '1'
 
     steps:
@@ -65,7 +69,7 @@ jobs:
         if: ${{ github.event.inputs.probe == 'true' }}
         run: PROBE=true python backend/fetch.py
 
-      - name: Download BSE bhavcopy (raw prices to R2)
+      - name: Download BSE bhavcopy (raw prices into data/raw/)
         if: ${{ github.event.inputs.probe != 'true' }}
         env:
           START_DATE: ${{ github.event.inputs.start_date }}
@@ -83,19 +87,34 @@ jobs:
         continue-on-error: true
         run: python backend/actions.py --live
 
+      - name: Save raw prices and lists to git (before the build, so a failed build never loses downloads)
+        if: ${{ !cancelled() && github.event.inputs.probe != 'true' }}
+        run: |
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "actions@github.com"
+          git add -A data/raw data/scrips.json data/state.json data/corporate_actions data/factors_cache.csv || true
+          git commit -m "BSE raw prices and corporate actions" || exit 0
+          git pull --rebase origin main
+          git push origin main
+
       - name: Build adjusted files and upload to R2
         if: ${{ github.event.inputs.probe != 'true' }}
         env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          R2_BUCKET: nse-stock-data
+          WEEKLY: ${{ github.event.inputs.weekly_run || 'false' }}
           FORCE_ALL: ${{ github.event.inputs.force_all || 'false' }}
           RECOMPUTE_FACTORS: ${{ github.event.inputs.recompute_factors || 'false' }}
         run: python backend/build.py
 
-      - name: Commit the (small) corporate-action list
-        if: ${{ github.event.inputs.probe != 'true' }}
+      - name: Save what R2 now holds (build_state.json)
+        if: ${{ !cancelled() && github.event.inputs.probe != 'true' }}
         run: |
           git config --global user.name "GitHub Actions Bot"
           git config --global user.email "actions@github.com"
-          git add data/corporate_actions/bse_live.csv || true
-          git commit -m "BSE corporate actions update" || exit 0
+          git add data/build_state.json data/factors_cache.csv || true
+          git commit -m "BSE build state" || exit 0
           git pull --rebase origin main
           git push origin main
