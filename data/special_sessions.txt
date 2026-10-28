@@ -1,1 +1,5 @@
-
+# One YYYY-MM-DD per line: Saturday/Sunday special sessions (Muhurat, Budget day) that BSE published a file for. Text after # is ignored.
+2024-11-01   # Diwali Muhurat
+2025-02-01   # Budget day
+2025-10-21   # Diwali Muhurat
+2026-02-01   # Budget day
