@@ -1,0 +1,35 @@
+name: BSE Weekly Full Rebuild
+
+# The daily run rebuilds only the CURRENT period file. Older period files hold prices adjusted for events that were known when they were
+# last built, so once a week every period file is rebuilt (history buckets are always kept current by the daily run).
+
+on:
+  schedule:
+    - cron: '30 2 * * 0'         # Sunday 08:00 IST
+  workflow_dispatch:
+
+concurrency:
+  group: bse-r2
+  cancel-in-progress: false
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+      R2_BUCKET: nse-stock-data
+      PERIOD_MODE: year
+      FORCE_ALL: 'true'
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy pyarrow boto3 requests
+      - run: python backend/build.py

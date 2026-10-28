@@ -1,1 +1,101 @@
+name: Daily BSE Fetcher
 
+# Downloads BSE's bhavcopy (raw prices -> R2: bse/raw/), reads corporate events, then builds the adjusted files the web engine reads
+# (R2: bse/<year>.parquet, bse/h/.., bse/p/.., bse/manifest.json, bse/recent.json). Nothing big is committed to git.
+
+on:
+  schedule:
+    - cron: '45 13 * * 1-5'      # 19:15 IST, Monday to Friday (BSE publishes its bhavcopy in the evening)
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: 'Start date YYYY-MM-DD (empty = the day after the last stored day; first run: 2007-01-01)'
+        required: false
+        default: ''
+      end_date:
+        description: 'End date YYYY-MM-DD (empty = today)'
+        required: false
+        default: ''
+      probe:
+        description: 'Only test which BSE file types exist for sample dates 2000-today (changes nothing). Run this FIRST.'
+        type: boolean
+        default: false
+      ca_backfill_from:
+        description: 'One-off: download BSE corporate-action history from this year (e.g. 2007) into data/corporate_actions/bse_live.csv'
+        required: false
+        default: ''
+      recompute_factors:
+        description: 'Recompute every adjustment factor from the raw prices (normally leave unticked)'
+        type: boolean
+        default: false
+      force_all:
+        description: 'Rebuild EVERY period file and history bucket (normally leave unticked)'
+        type: boolean
+        default: false
+
+concurrency:
+  group: bse-r2                  # never two BSE runs writing to R2 at the same time
+  cancel-in-progress: false
+
+jobs:
+  bse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+      R2_BUCKET: nse-stock-data
+      PERIOD_MODE: year          # year -> bse/2026.parquet (like NSE).  half -> bse/2026_H1.parquet  (do not change after the first run without a full rebuild)
+      PYTHONUNBUFFERED: '1'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy pyarrow boto3 requests
+
+      - name: Probe BSE file types (changes nothing)
+        if: ${{ github.event.inputs.probe == 'true' }}
+        run: PROBE=true python backend/fetch.py
+
+      - name: Download BSE bhavcopy (raw prices to R2)
+        if: ${{ github.event.inputs.probe != 'true' }}
+        env:
+          START_DATE: ${{ github.event.inputs.start_date }}
+          END_DATE: ${{ github.event.inputs.end_date }}
+          MAX_RUNTIME_MINUTES: '270'     # stops itself after 4.5 h and keeps everything downloaded; run again to continue
+        run: python backend/fetch.py
+
+      - name: Corporate-action history (one-off backfill)
+        if: ${{ github.event.inputs.probe != 'true' && github.event.inputs.ca_backfill_from != '' }}
+        continue-on-error: true
+        run: python backend/actions.py --backfill ${{ github.event.inputs.ca_backfill_from }}
+
+      - name: Corporate actions of the last days (BSE live list)
+        if: ${{ github.event.inputs.probe != 'true' }}
+        continue-on-error: true
+        run: python backend/actions.py --live
+
+      - name: Build adjusted files and upload to R2
+        if: ${{ github.event.inputs.probe != 'true' }}
+        env:
+          FORCE_ALL: ${{ github.event.inputs.force_all || 'false' }}
+          RECOMPUTE_FACTORS: ${{ github.event.inputs.recompute_factors || 'false' }}
+        run: python backend/build.py
+
+      - name: Commit the (small) corporate-action list
+        if: ${{ github.event.inputs.probe != 'true' }}
+        run: |
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "actions@github.com"
+          git add data/corporate_actions/bse_live.csv || true
+          git commit -m "BSE corporate actions update" || exit 0
+          git pull --rebase origin main
+          git push origin main
