@@ -1,18 +1,30 @@
-"""Shared settings: the database id, the file period (half-year by default) and the raw-data layout."""
+"""Shared settings: database id, file period, and where everything lives.
+
+GIT (this repo, data/):                              R2 (bucket, folder bse/):
+  data/raw/<year>/<yyyy-mm>.parquet  raw prices        bse/<year>.parquet     adjusted period files
+  data/scrips.json, state.json       small indexes     bse/h/.., bse/p/..     history buckets + packs
+  data/factors_cache.csv             adjustment cache  bse/manifest.json, recent.json, symbols.json, scrips.json
+  data/build_state.json              what R2 holds
+Raw prices never go to R2: R2 only receives the final adjusted files (fewest possible write operations).
+"""
 import os
 import re
 
 DB_ID = "bse"                                    # folder in the bucket: bse/...
 PERIOD_MODE = os.getenv("PERIOD_MODE", "year").strip().lower()    # "year" -> 2026.parquet (same as NSE)   "half" -> 2026_H1.parquet
-RAW_PREFIX = f"{DB_ID}/raw/"                     # unadjusted prices, one file per period
-SCRIPS_KEY = f"{DB_ID}/raw/scrips.json"          # scrip code -> names, first/last date
-STATE_KEY = f"{DB_ID}/raw/state.json"            # days already tried (so holidays are not asked again)
+
+DATA_DIR = os.getenv("DATA_DIR", "data")
+RAW_DIR = os.path.join(DATA_DIR, "raw")
+STATE_FILE = os.path.join(DATA_DIR, "state.json")              # stored days, days BSE had no file for
+SCRIPS_FILE = os.path.join(DATA_DIR, "scrips.json")            # scrip code -> latest symbol, name, ISIN, first/last date, older symbols
+BUILD_STATE_FILE = os.path.join(DATA_DIR, "build_state.json")  # hashes of what is already in R2, dividend cutoff
+FACTORS_FILE = os.path.join(DATA_DIR, "factors_cache.csv")     # computed adjustment factors
 
 PERIOD_RE = re.compile(r"^(\d{4})(?:_H([12]))?$")
 
 
 def period_of(date_str):
-    """'2026-03-05' -> '2026_H1' (or '2026' when PERIOD_MODE=year)."""
+    """'2026-03-05' -> '2026' (or '2026_H1' when PERIOD_MODE=half)."""
     y, m = date_str[:4], int(date_str[5:7])
     return y if PERIOD_MODE == "year" else f"{y}_H{1 if m <= 6 else 2}"
 
@@ -26,10 +38,6 @@ def period_start(period):
 def period_sort_key(period):
     m = PERIOD_RE.match(period)
     return (int(m.group(1)), int(m.group(2) or 0))
-
-
-def raw_key(period):
-    return f"{RAW_PREFIX}{period}.parquet"
 
 
 def clean_symbol(s):

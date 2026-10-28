@@ -23,12 +23,12 @@ def read_path(path, columns=None):
         return read_bytes(f.read(), columns)
 
 
-def write_path(df, path, row_group_size=5000, schema=None):
+def write_path(df, path, row_group_size=5000, schema=None, compression="snappy"):
     if schema is not None:
         table = pa.Table.from_pandas(df, schema=schema, preserve_index=False)
     else:
         table = pa.Table.from_pandas(df, preserve_index=False)
-    pq.write_table(table, path, compression="snappy", row_group_size=row_group_size)
+    pq.write_table(table, path, compression=compression, row_group_size=row_group_size)
 
 
 def to_bytes(df, row_group_size=5000):

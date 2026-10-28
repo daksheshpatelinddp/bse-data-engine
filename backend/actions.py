@@ -31,14 +31,12 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import pio
-from common import raw_key, period_of, period_sort_key, RAW_PREFIX, DB_ID
-from storage import get_store
+import rawstore
+from common import period_of, period_sort_key, DATA_DIR, FACTORS_FILE
 
-CA_DIR = os.getenv("CA_DIR", "data/corporate_actions")
-MANUAL_FILE = os.getenv("MANUAL_FILE", "data/manual_adjustments.json")
+CA_DIR = os.getenv("CA_DIR", os.path.join(DATA_DIR, "corporate_actions"))
+MANUAL_FILE = os.getenv("MANUAL_FILE", os.path.join(DATA_DIR, "manual_adjustments.json"))
 LIVE_CSV = os.path.join(CA_DIR, "bse_live.csv")
-FACTORS_KEY = f"{DB_ID}/raw/factors.csv"
 ROUND_TO = int(os.getenv("PRICE_ROUND", "4") or 4)                      # penny stocks need more than 2 decimals
 MIN_FACTOR = float(os.getenv("DIVIDEND_MIN_FACTOR", "0.5") or 0.5)
 
@@ -230,8 +228,8 @@ def load_manual():
 # 3. looking prices up in the raw files
 # ----------------------------------------------------------------------------------------------------------------------
 class RawLookup:
-    def __init__(self, store, periods, keep=4):
-        self.store, self.keep = store, keep
+    def __init__(self, periods, keep=4):
+        self.keep = keep
         self.periods = sorted(periods, key=period_sort_key)
         self.cache = OrderedDict()
 
@@ -239,7 +237,7 @@ class RawLookup:
         if p in self.cache:
             self.cache.move_to_end(p)
             return self.cache[p]
-        df = pio.read_bytes(self.store.get(raw_key(p)), columns=["scrip_code", "date", "close", "prev_close"])
+        df = rawstore.read_period(p, columns=["scrip_code", "date", "close", "prev_close"])
         df = df.sort_values(["scrip_code", "date"])
         g = {c: (x["date"].values.astype("U10"), x["close"].values.astype("float64"), x["prev_close"].values.astype("float64"))
              for c, x in df.groupby("scrip_code")}
@@ -301,20 +299,20 @@ def compute_event(look, code, ex, typ, parsed, amount):
     return observed, ""
 
 
-def load_factor_cache(store):
-    body = store.get(FACTORS_KEY)
-    if body is None:
+def load_factor_cache():
+    if not os.path.exists(FACTORS_FILE):
         return pd.DataFrame(columns=["scrip_code", "ex_date", "type", "key", "factor", "amount", "status", "note"])
-    return pd.read_csv(io.BytesIO(body), dtype={"scrip_code": str, "key": str, "note": str, "status": str})
+    return pd.read_csv(FACTORS_FILE, dtype={"scrip_code": str, "key": str, "note": str, "status": str})
 
 
-def compute_all(store, periods, asof=None, force=False, known_codes=None):
+def compute_all(periods, asof=None, force=False, known_codes=None, dividend_cutoff=None):
     """Incremental: only new events (and recent skipped ones) are looked up. Returns (factors, report_lines).
-    factors = DataFrame(scrip_code, ex_date, factor) with one row per (code, ex-date), several events multiplied."""
+    factors = DataFrame(scrip_code, ex_date, factor) with one row per (code, ex-date), several events multiplied.
+    Dividends with an ex-date AFTER dividend_cutoff are left out (they are applied by the weekly run, which moves the cutoff forward)."""
     events = expand_events(load_events())
     if known_codes is not None and len(events):
         events = events[events["scrip_code"].isin(known_codes)]
-    cache = load_factor_cache(store)
+    cache = load_factor_cache()
     if force:
         cache = cache.iloc[0:0]
     asof = asof or datetime.now().strftime("%Y-%m-%d")
@@ -326,7 +324,7 @@ def compute_all(store, periods, asof=None, force=False, known_codes=None):
         for r in cache.itertuples(index=False):
             if r.status == "ok" or r.ex_date < recent_cut:
                 done[(r.scrip_code, r.ex_date, r.type, r.key)] = r
-        look = RawLookup(store, periods)
+        look = RawLookup(periods)
         rows, new_ok, new_skip, future = [], 0, 0, 0
         for r in events.itertuples(index=False):
             k = (r.scrip_code, r.ex_date, r.type, r.key)
@@ -347,8 +345,14 @@ def compute_all(store, periods, asof=None, force=False, known_codes=None):
                 rows.append((r.scrip_code, r.ex_date, r.type, r.key, float(f), amt, "ok", note))
         cache = pd.DataFrame(rows, columns=["scrip_code", "ex_date", "type", "key", "factor", "amount", "status", "note"])
         report.append(f"events with a price effect: {len(events)}; newly computed ok={new_ok} skipped={new_skip}; future ex-date={future}")
-    store.put(FACTORS_KEY, cache.to_csv(index=False).encode(), "text/csv", "no-cache")
+    os.makedirs(os.path.dirname(FACTORS_FILE) or ".", exist_ok=True)
+    cache.to_csv(FACTORS_FILE, index=False)
     ok = cache[cache["status"] == "ok"]
+    if dividend_cutoff:
+        late = (ok["type"] == "DIVIDEND") & (ok["ex_date"] > dividend_cutoff)
+        if late.any():
+            report.append(f"{int(late.sum())} dividend(s) with ex-date after {dividend_cutoff} wait for the weekly run")
+        ok = ok[~late]
     man = load_manual()
     fac = pd.concat([ok[["scrip_code", "ex_date", "type", "factor", "amount"]], man], ignore_index=True)
     warn = cache[cache["note"].fillna("").str.startswith("WARNING")]

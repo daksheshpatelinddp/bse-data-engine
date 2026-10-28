@@ -90,7 +90,9 @@ class R2Store:
         self.c.put_object(Bucket=BUCKET_NAME, Key=key, Body=body, **kw)
 
     def upload_file(self, path, key):
-        self.c.upload_file(path, BUCKET_NAME, key)
+        """ONE put_object call = ONE Class A operation (boto3's upload_file would split files over 8 MB into many parts, each one an operation)."""
+        with open(path, "rb") as f:
+            self.c.put_object(Bucket=BUCKET_NAME, Key=key, Body=f)
 
     def download_file(self, key, path):
         try:
