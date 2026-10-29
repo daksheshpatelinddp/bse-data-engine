@@ -388,14 +388,14 @@ def compute_event(look, code, ex, typ, parsed, amount):
             return observed, "ratio taken from BSE's reference price"
         return None, "consolidation without ratio in the text and BSE reference price not adjusted"
     if typ in ("SPLIT", "BONUS") and (parsed is None or pd.isna(parsed)):
-        if observed is None:
-            return None, "no ratio in the text and no price around the ex-date"
-        if not (0.01 < observed < 0.9999):
-            g, gd = look.gap(code, ex) if est_on else (None, None)
-            if g and 0.02 < g < SPLIT_GAP_MAX:
-                return snap_ratio(g), f"ESTIMATE from the price drop on {gd} (market-adjusted gap {g:.4f})"
-            return None, f"no ratio in the text, BSE reference price not adjusted and no clear price drop on the ex-date (ratio {observed:.4f})"
-        return observed, "ratio taken from BSE's reference price"
+        if not cum:
+            return None, "no price before the ex-date (nothing to adjust)"
+        if observed is not None and 0.01 < observed < 0.9999:
+            return observed, "ratio taken from BSE's reference price"
+        g, gd = look.gap(code, ex) if est_on else (None, None)
+        if g and 0.02 < g < SPLIT_GAP_MAX:
+            return snap_ratio(g), f"ESTIMATE from the price drop on {gd} (market-adjusted gap {g:.4f})"
+        return None, "no ratio in the text, BSE reference price not adjusted and no clear price drop on the ex-date" + (f" (gap {g:.4f})" if g else "")
     if typ in ("SPLIT", "BONUS"):
         if observed and 0 < observed < 0.9999 and abs(observed / parsed - 1) > 0.15:
             return parsed, f"WARNING text says {parsed:.4f}, BSE reference price implies {observed:.4f} (text used)"
@@ -407,17 +407,16 @@ def compute_event(look, code, ex, typ, parsed, amount):
         if f < MIN_FACTOR:
             return None, f"dividend {amount:g} is {100 * amount / cum:.0f}% of price {cum:.2f}"
         return f, ""
-    # RIGHTS / DEMERGER: BSE's own reference-price adjustment, else the measured price drop on the ex-date
-    if observed is None:
-        return None, "no price before or after the ex-date"
-    if not (0.2 < observed < 0.9999):
-        g, gd = look.gap(code, ex) if est_on else (None, None)
-        top = DEMERGER_GAP_MAX if typ == "DEMERGER" else RIGHTS_GAP_MAX
-        if g and 0.2 < g < top:
-            return float(g), f"ESTIMATE from the price drop on {gd} (market-adjusted gap {g:.4f})"
-        return None, f"BSE reference price not adjusted and no clear price drop on the ex-date" + (f" (gap {g:.4f})" if g else "")
-    return observed, ""
-
+    # RIGHTS / DEMERGER: BSE's own reference-price adjustment, else the measured price drop on the ex-date (like the NSE engine)
+    if not cum:
+        return None, "no price before the ex-date (nothing to adjust)"
+    if observed is not None and 0.2 < observed < 0.9999:
+        return observed, ""
+    g, gd = look.gap(code, ex) if est_on else (None, None)
+    top = DEMERGER_GAP_MAX if typ == "DEMERGER" else RIGHTS_GAP_MAX
+    if g and 0.2 < g < top:
+        return float(g), f"ESTIMATE from the price drop on {gd} (market-adjusted gap {g:.4f})"
+    return None, "BSE reference price not adjusted and no price drop on the ex-date" + (f" (gap {g:.4f})" if g else " (no trade within 10 days)")
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -441,7 +440,7 @@ def write_review(cache, events, look, names):
     m.insert(1, "company", m["scrip_code"].map(names).fillna(""))
 
     # A. split / bonus rows whose purpose text carries no ratio
-    nr = m[m["type"].isin(["SPLIT", "BONUS"]) & m["parsed"].isna()].copy()
+    nr = m[m["type"].isin(["SPLIT", "BONUS"]) & m["parsed"].isna() & ~m["note"].fillna("").str.startswith("no price before")].copy()   # events with no price before them have nothing to adjust
     gaps = [look.gap(c, e) for c, e in zip(nr["scrip_code"], nr["ex_date"])]
     nr["price_gap"] = [g[0] for g in gaps]
     nr["applied"] = nr["factor"]
@@ -449,10 +448,11 @@ def write_review(cache, events, look, names):
     nr.to_csv(os.path.join(REPORT_DIR, "review_no_ratio.csv"), index=False)
 
     # B. split / bonus rows where the text and BSE's reference price disagree
-    dg = m[m["note"].fillna("").str.startswith("WARNING")].copy()
+    dg = m[m["note"].fillna("").str.startswith("WARNING")].drop_duplicates(["scrip_code", "ex_date"]).copy()
+    same_day = m[m["type"].isin(["SPLIT", "BONUS"]) & (m["status"] == "ok")].groupby(["scrip_code", "ex_date"])["factor"].prod()   # a split + bonus on one day move the price together
     rows = []
     for r in dg.itertuples(index=False):
-        t = float(r.factor)
+        t = float(same_day.get((r.scrip_code, r.ex_date), r.factor))
         g, gd = look.gap(r.scrip_code, r.ex_date)
         cum, pc = look.around(r.scrip_code, r.ex_date)
         bse = (pc / cum) if (cum and pc) else np.nan
@@ -460,6 +460,8 @@ def write_review(cache, events, look, names):
         best = min(win, key=lambda x: abs(np.log(x[1] / t))) if win else (None, None)
         if g and abs(g / t - 1) <= 0.15:
             sug, hint = "KEEP: the price really dropped by this ratio on the ex-date (BSE's reference price was not adjusted)", ""
+        elif not g:
+            sug, hint = "KEEP text: the stock did not trade within 10 days of the ex-date, so the price cannot confirm it (look at it if the stock matters)", ""
         elif best[0] and best[0] != r.ex_date and abs(best[1] / t - 1) <= 0.15:
             sug = f"MOVE: the price drop ({best[1]:.2f}) is on {best[0]}; the ex-date in the file looks wrong"
             hint = json.dumps({r.scrip_code: [{"ex_date": r.ex_date, "factor": 1.0, "replace": True, "description": "wrong ex-date"},
@@ -468,7 +470,7 @@ def write_review(cache, events, look, names):
             sug = "IGNORE?: no price drop within 10 days of the ex-date; the event may never have taken effect"
             hint = json.dumps({r.scrip_code: [{"ex_date": r.ex_date, "factor": 1.0, "replace": True, "description": "no price drop seen"}]})
         else:
-            sug, hint = f"CHECK: the price moved by {g:.2f}" if g else "CHECK: no price after the ex-date", ""
+            sug, hint = f"CHECK: the price moved by {g:.2f}", ""
         rows.append((r.scrip_code, r.company, r.ex_date, r.type, round(t, 4), round(bse, 4) if bse == bse else np.nan,
                      round(g, 4) if g else np.nan, best[0] or "", round(best[1], 4) if best[1] else np.nan, sug, hint))
     dgf = pd.DataFrame(rows, columns=["scrip_code", "company", "ex_date", "type", "text_ratio", "bse_ratio", "price_gap", "biggest_drop_date", "drop_then", "suggestion", "manual_override"])
