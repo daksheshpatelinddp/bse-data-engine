@@ -50,6 +50,15 @@ and the date range -> Download CSV. Do one file per purpose (split long ranges i
 `data/corporate_actions/`. The folder is read as a whole: every `.csv` with the columns `Security Code`, `Ex Date`, `Purpose` is used.
 Not needed: preference-share dividends/rights (ignored on purpose), buy-back, amalgamation. Rows whose purpose is just `-` are labelled from the file name, so keep the category in the file name (`...Splits.csv`, `...Bonus.csv`).
 A purpose text without a ratio is fine: the factor is then taken from BSE's own reference price (PREVCLOSE) on the ex-date.
+BSE does **not** adjust that reference price for spin-offs, most rights issues and some splits/bonus. For those the factor is **estimated from the real price drop** on the ex-date
+(open of the first trading day / last close before it), divided by the median move of all stocks that day so a falling market is not mistaken for a spin-off.
+Split/bonus estimates snap to the usual ratios (1/2, 1/5, 1/10, 1:1 bonus ...). Like the NSE engine, a listed spin-off or rights issue is a real event, so any drop below 1 is applied (`DEMERGER_GAP_MAX` / `RIGHTS_GAP_MAX`, default 0.9999; set 0.97 to ignore drops under 3 %). The log line `[REPORT] N events estimated ...` counts them.
+
+### Review files (data/reports/, committed by every Daily BSE Fetcher run)
+* `adjustment_review.md` - open it on GitHub: split/bonus without a ratio, and the rows where text and BSE disagree, each with a suggestion (KEEP / MOVE / IGNORE? / CHECK)
+* `review_no_ratio.csv`, `review_disagreements.csv` (with a ready-to-paste `manual_override` column), `review_demerger_rights.csv`
+* To change one event, paste into `data/manual_adjustments.json` (keyed by scrip code): `{"532369": [{"ex_date": "2009-09-14", "factor": 1.0, "replace": true, "description": "no drop"}]}`.
+  `"replace": true` cancels every computed event of that code + ex-date; an entry without it is multiplied in as an extra factor. Then run the daily fetcher with `recompute_factors` ticked.
 For new events repeat the download (for example monthly, range = last 40 days to next 40 days); events already known are not counted twice.
 After adding files, run **Daily BSE Fetcher** once with `recompute_factors` and `force_all` ticked to rebuild everything in R2.
 
