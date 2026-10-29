@@ -97,7 +97,7 @@ jobs:
         run: |
           git config --global user.name "GitHub Actions Bot"
           git config --global user.email "actions@github.com"
-          git add -A data/raw data/scrips.json data/state.json data/corporate_actions data/factors_cache.csv || true
+          git add -A data/raw data/scrips.json data/state.json data/corporate_actions data/factors_cache.csv data/reports || true
           git commit -m "BSE raw prices, corporate actions and factors" || exit 0
           git pull --rebase origin main
           git push origin main
