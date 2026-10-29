@@ -62,7 +62,7 @@ def fake_fetch(session, dt, date_str):
 pd.DataFrame([["500001", "AAA LTD", "03-Feb-2025", "Stock  Split From Rs.10/- To Rs.5/-"],
               ["500001", "AAA LTD", "03-Mar-2025", "Dividend - Rs. - 5.0000"],
               ["500003", "CCC", "10-Feb-2025", "Spin Off"],
-              ["500004", "DDD", "17-Feb-2025", "Bonus issue 1:1"],
+              ["500004", "DDD", "17-Feb-2025", "Bonus issue"],          # BSE exports often carry no ratio: BSE's reference price (80 -> 40) gives 0.5
               ["599999", "UNKNOWN", "01-Feb-2025", "Bonus issue 1:1"]],
              columns=["Security Code", "Security Name", "Ex Date", "Purpose"]).to_csv(os.path.join(CA, "bse_export.csv"), index=False)
 
@@ -145,5 +145,11 @@ e = pd.concat([pio.read_bytes(store.get(f"bse/h/{m3['fingerprint'][:10]}/{n}.par
 assert e["2024-12-02"] == 9.0, e["2024-12-02"]
 e24 = pio.read_bytes(store.get(f"bse/{first}.parquet")); assert e24[e24.symbol == "EEE"].set_index("date")["close"]["2024-12-02"] == 9.0, "weekly run refreshes older period files"
 print("weekly run ok: only bucket", changed, "rebuilt; writes:", build.PUTS["n"])
+# ---- 6. DRY_RUN: the daily workflow checks the adjustments without touching R2 or build_state.json ---------------------------------
+before_state = open(common.BUILD_STATE_FILE).read(); before_r2 = store.list("bse/")
+os.environ["DRY_RUN"] = "true"; build.WEEKLY = False
+build.run(); del os.environ["DRY_RUN"]
+assert open(common.BUILD_STATE_FILE).read() == before_state and store.list("bse/") == before_r2, "dry run must not change R2 or build_state.json"
+print("dry run ok")
 print("\nALL OK")
 shutil.rmtree(tmp, ignore_errors=True)
