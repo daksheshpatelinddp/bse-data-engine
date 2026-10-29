@@ -20,9 +20,9 @@ on:
         type: boolean
         default: false
   # When you are satisfied, remove the "#" in front of the next three lines to upload automatically after every successful daily fetch:
-     workflow_run:
-  #   workflows: ["Daily BSE Fetcher"]
-  #   types: [completed]
+      workflow_run:
+      workflows: ["Daily BSE Fetcher"]
+      types: [completed]
   # And for the weekly dividend run (Sunday 08:00 IST) add a second workflow file copying this one with  WEEKLY: 'true'  and a schedule.
 
 concurrency:
