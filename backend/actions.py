@@ -11,6 +11,7 @@ Event sources (all keyed by BSE scrip code):
 How each event type becomes a factor (a row dated BEFORE the ex-date is multiplied by it):
   SPLIT     parsed from the text "from Rs 10 to Rs 2"            -> 2/10
   BONUS     "Bonus 1:2" (1 free share per 2 held)                -> 2/(1+2)
+  CONSOL    consolidation / reverse split "from Rs 1 to Rs 10" -> 10 (factor above 1: old prices go up)
   RIGHTS    BSE's own adjustment of the reference price: PREVCLOSE of the ex-date / last close before it
   DEMERGER  same (spin-off, capital reduction)                   -> PREVCLOSE of the ex-date / last close before it
   DIVIDEND  "Dividend - Rs. - 8.0000"                            -> 1 - amount / last raw close before the ex-date
@@ -73,11 +74,11 @@ def parse_dividend(purpose):
     return out
 
 
-def parse_split(text):
+def parse_split(text, allow_up=False):
     m = re.search(r"(?:from|of)\s*(?:rs|re|inr|\.)*\s*(\d+(?:\.\d+)?)\s*(?:/-)?.*?\bto\b\s*(?:rs|re|inr|\.)*\s*(\d+(?:\.\d+)?)", text)
     if m:
         v1, v2 = float(m.group(1)), float(m.group(2))
-        if v1 > v2 > 0:
+        if v1 > v2 > 0 or (allow_up and 0 < v1 < v2):
             return v2 / v1
     return None
 
@@ -86,15 +87,24 @@ def parse_purpose(purpose):
     """-> [(type, parsed_factor_or_None, amount_or_None)]"""
     text = re.sub(r"\s+", " ", str(purpose or "")).strip().lower()
     out = []
+    if "preference" in text or "preferance" in text:          # preference-share dividends / rights do not change the ordinary share price
+        return out
+    if re.search(r"consolidat|reverse split", text):          # face value up (e.g. Rs 1 -> Rs 10): old prices go UP, factor > 1
+        f = parse_split(text, allow_up=True)
+        out.append(("CONSOL", f if (f and f > 1) else None, None))
     if any(k in text for k in ("split", "sub-division", "sub division", "subdivision", "consolidation")) or "face value" in text:
         f = parse_split(text)
         if f and 0 < f < 1:
             out.append(("SPLIT", f, None))
+        elif re.search(r"split|sub[\s-]?division", text) and not re.search(r"consolidat|reverse", text):
+            out.append(("SPLIT", None, None))                 # no ratio in the text (BSE's export often has none): BSE's reference price decides
     m = re.search(r"bonus[^0-9]{0,40}?(\d+)\s*:\s*(\d+)", text)
     if m:
         a, b = float(m.group(1)), float(m.group(2))
         if a > 0 and b > 0:
             out.append(("BONUS", b / (a + b), None))
+    elif re.search(r"\bbonus\b", text):
+        out.append(("BONUS", None, None))                     # no ratio in the text
     if re.search(r"\brights?\b", text):
         out.append(("RIGHTS", None, None))
     if re.search(r"de-?merger|spin[\s-]?off|capital reduction|reduction of (?:share )?capital", text):
@@ -135,8 +145,25 @@ def _to_date(x):
         return None
 
 
-def frame_to_events(df):
-    """A BSE corporate-action table (export or live list) -> DataFrame(scrip_code, ex_date, purpose)."""
+FILE_LABELS = [("subdiv", "Sub Division of Equity shares"), ("split", "Stock Split"), ("bonus", "Bonus issue"), ("spin", "Spin Off"),
+               ("capitalred", "Capital Reduction"), ("reduction", "Capital Reduction"), ("consol", "Consolidation of shares"),
+               ("demerger", "Demerger"), ("right", "Right Issue of Equity Shares")]
+
+
+def label_from_filename(path):
+    """BSE's export of one category often has '-' as the purpose of some rows (no text, no ratio). The file name tells the category."""
+    name = re.sub(r"[^a-z]", "", os.path.basename(str(path)).lower())
+    if "pref" in name or "dividend" in name:
+        return None
+    for key, label in FILE_LABELS:
+        if key in name:
+            return label
+    return None
+
+
+def frame_to_events(df, default_purpose=None):
+    """A BSE corporate-action table (export or live list) -> DataFrame(scrip_code, ex_date, purpose).
+    default_purpose replaces purposes that are only '-' (see label_from_filename)."""
     code = _col(df, "Security Code", "scrip_code", "ScripCode", "SC_CODE", "Code")
     ex = _col(df, "Ex Date", "Ex_date", "ExDate", "EX_DATE")
     pur = _col(df, "Purpose", "Subject", "Description")
@@ -144,6 +171,8 @@ def frame_to_events(df):
         return pd.DataFrame(columns=["scrip_code", "ex_date", "purpose"])
     out = pd.DataFrame({"scrip_code": df[code].astype(str).str.strip().str.replace(r"\.0$", "", regex=True),
                         "ex_date": df[ex].map(_to_date), "purpose": df[pur].astype(str).str.strip()})
+    if default_purpose:
+        out["purpose"] = out["purpose"].mask(out["purpose"].isin(["-", "", "nan", "None"]), default_purpose)
     return out.dropna(subset=["ex_date"]).query("scrip_code != '' and purpose != ''")
 
 
@@ -155,7 +184,7 @@ def load_events():
                 df = pd.read_csv(f, dtype=str, skipinitialspace=True, encoding="utf-8-sig")
             except UnicodeDecodeError:
                 df = pd.read_csv(f, dtype=str, skipinitialspace=True, encoding="latin-1")
-            ev = frame_to_events(df)
+            ev = frame_to_events(df, label_from_filename(f))
             if len(ev):
                 frames.append(ev)
             else:
@@ -280,6 +309,18 @@ def compute_event(look, code, ex, typ, parsed, amount):
     """-> (factor or None, note)"""
     cum, pc = look.around(code, ex)
     observed = (pc / cum) if (cum and pc and cum > 0) else None
+    if typ == "CONSOL":
+        if parsed is not None and not pd.isna(parsed):
+            return parsed, ("" if not observed or observed < 1.0001 or abs(observed / parsed - 1) <= 0.15 else f"WARNING text says {parsed:.4f}, BSE reference price implies {observed:.4f} (text used)")
+        if observed and 1.0001 < observed < 500:
+            return observed, "ratio taken from BSE's reference price"
+        return None, "consolidation without ratio in the text and BSE reference price not adjusted"
+    if typ in ("SPLIT", "BONUS") and (parsed is None or pd.isna(parsed)):
+        if observed is None:
+            return None, "no ratio in the text and no price around the ex-date"
+        if not (0.01 < observed < 0.9999):
+            return None, f"no ratio in the text and BSE reference price not adjusted (ratio {observed:.4f})"
+        return observed, "ratio taken from BSE's reference price"
     if typ in ("SPLIT", "BONUS"):
         if observed and 0 < observed < 0.9999 and abs(observed / parsed - 1) > 0.15:
             return parsed, f"WARNING text says {parsed:.4f}, BSE reference price implies {observed:.4f} (text used)"
@@ -406,6 +447,28 @@ class Adjuster:
             for c in ("open", "high", "low", "close"):
                 df.loc[hit, c] = np.round(df.loc[hit, c].values * mult[hit], ROUND_TO)
         return df
+
+
+def print_report(limit=12):
+    """What happened to the events: counts by type, why some were skipped, and the splits/bonus where text and BSE's reference price disagree."""
+    c = load_factor_cache()
+    if c.empty:
+        print("[REPORT] no corporate events loaded (put BSE CSV exports into data/corporate_actions/)")
+        return
+    print("[REPORT] events by type and result:")
+    for (typ, st), n in c.groupby(["type", "status"]).size().items():
+        print(f"[REPORT]   {typ:9s} {st:5s} {n}")
+    sk = c[c["status"] == "skip"]
+    if len(sk):
+        why = sk["note"].fillna("").str.replace(r"[\d.]+", "#", regex=True).value_counts().head(limit)
+        print("[REPORT] skipped because:")
+        for note, n in why.items():
+            print(f"[REPORT]   {n:5d}  {note}")
+    w = c[c["note"].fillna("").str.startswith("WARNING")]
+    if len(w):
+        print(f"[REPORT] {len(w)} split/bonus rows where the text and BSE's reference price disagree (first {limit}):")
+        for r in w.head(limit).itertuples():
+            print(f"[REPORT]   {r.scrip_code} {r.ex_date} {r.type} {r.note}")
 
 
 if __name__ == "__main__":

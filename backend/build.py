@@ -15,6 +15,9 @@ R2 WRITE BUDGET (Class A operations) - the whole design aims at the minimum:
   * cash dividends are applied by the WEEKLY run (WEEKLY=true): until then they wait, so a dividend does not rewrite the history every day
   * old files are removed with delete calls (free), found through the previous manifest, not through list calls
 
+DRY_RUN=true: do everything except writing to R2 (the files go to a temporary folder, build_state.json is not touched). Used by the daily workflow to
+check the adjustments and print the report, so nothing is uploaded until you decide to run "Upload to R2".
+
 Environment: WEEKLY=true (apply dividends up to today and refresh every period file), FORCE_ALL=true (rebuild everything),
 DIVIDEND_MODE=daily (apply dividends at once), HIST_BUCKET_SIZE (64), RECENT_BARS (400), ADJUST_DIVIDENDS, PRICE_ROUND, PERIOD_MODE.
 """
@@ -333,6 +336,11 @@ def build_aliases(scrips, sym_of):
 # ----------------------------------------------------------------------------------------------------------------------
 def run(store=None):
     global BSTATE
+    dry = _on("DRY_RUN")
+    if dry:
+        from storage import LocalStore
+        store = LocalStore(tempfile.mkdtemp(prefix="bse_dry_"))
+        print("[DRY RUN] nothing is written to R2 and build_state.json is not changed")
     store = store or get_store()
     periods = rawstore.periods()
     if not periods:
@@ -398,9 +406,13 @@ def run(store=None):
         put_if_changed(store, f"{DB_ID}/scrips.json", json.dumps(info, separators=(",", ":"), sort_keys=True).encode(), "application/json")
         if not FAILED:
             BSTATE["dividend_cutoff"] = cutoff or ""
+        actions.print_report()
     finally:
-        save_json(BUILD_STATE_FILE, BSTATE)
-        print(f"[R2] write operations (Class A) in this run: about {PUTS['n']}")
+        if not dry:
+            save_json(BUILD_STATE_FILE, BSTATE)
+            print(f"[R2] write operations (Class A) in this run: about {PUTS['n']}")
+        else:
+            print(f"[DRY RUN] done; an upload would have made about {PUTS['n']} R2 writes (all files were new in the temporary folder)")
 
 
 if __name__ == "__main__":
