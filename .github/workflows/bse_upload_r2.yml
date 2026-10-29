@@ -1,0 +1,76 @@
+name: BSE Upload to R2
+
+# STAGE 2 - the ONLY workflow that writes to R2. It does no downloading: it reads the raw prices and corporate-action files already in git,
+# applies the adjustments, and uploads the adjusted files (bse/<year>.parquet, history buckets, packs, manifest, recent pack).
+# Files whose content did not change are not uploaded again. Run it by hand when the report of "Daily BSE Fetcher" looks right.
+
+on:
+  workflow_dispatch:
+    inputs:
+      weekly_run:
+        description: 'Apply cash dividends up to the last stored day and refresh every year file (use about once a week)'
+        type: boolean
+        default: false
+      force_all:
+        description: 'Rebuild and re-upload EVERYTHING (after changing corporate-action files, code or PERIOD_MODE)'
+        type: boolean
+        default: false
+      recompute_factors:
+        description: 'Recompute every adjustment factor from the raw prices first'
+        type: boolean
+        default: false
+  # When you are satisfied, remove the "#" in front of the next three lines to upload automatically after every successful daily fetch:
+  # workflow_run:
+  #   workflows: ["Daily BSE Fetcher"]
+  #   types: [completed]
+  # And for the weekly dividend run (Sunday 08:00 IST) add a second workflow file copying this one with  WEEKLY: 'true'  and a schedule.
+
+concurrency:
+  group: bse-data
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    # runs after a manual start, or after a successful daily fetch (only once the workflow_run lines above are enabled)
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    permissions:
+      contents: write
+    env:
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+      R2_BUCKET: nse-stock-data
+      PERIOD_MODE: year          # must be the same as in "Daily BSE Fetcher"; do not change after the first upload without force_all
+      WEEKLY: ${{ github.event.inputs.weekly_run || 'false' }}
+      FORCE_ALL: ${{ github.event.inputs.force_all || 'false' }}
+      RECOMPUTE_FACTORS: ${{ github.event.inputs.recompute_factors || 'false' }}
+      PYTHONUNBUFFERED: '1'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main              # always the newest raw data and CSV files
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy pyarrow boto3 requests
+
+      - name: Build adjusted files and upload to R2
+        run: python backend/build.py
+
+      - name: Save what R2 now holds (build_state.json)
+        if: ${{ !cancelled() }}
+        run: |
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "actions@github.com"
+          git add data/build_state.json data/factors_cache.csv || true
+          git commit -m "BSE R2 build state" || exit 0
+          git pull --rebase origin main
+          git push origin main
