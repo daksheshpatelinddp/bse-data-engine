@@ -9,7 +9,7 @@ scrip_code,company,ex_date,type,text_ratio,bse_ratio,price_gap,biggest_drop_date
 538212,SHARPINV,2015-12-02,SPLIT,0.1,0.0215,,,,"KEEP text: the stock did not trade within 10 days of the ex-date, so the price cannot confirm it (look at it if the stock matters)",
 526263,MOLDTECH,2016-02-17,SPLIT,0.2,0.1112,,,,"KEEP text: the stock did not trade within 10 days of the ex-date, so the price cannot confirm it (look at it if the stock matters)",
 501298,INDPRUD,2016-07-19,BONUS,0.3333,0.603,,,,"KEEP text: the stock did not trade within 10 days of the ex-date, so the price cannot confirm it (look at it if the stock matters)",
-530871,CHEMBOND,2016-09-06,SPLIT,0.3161,0.6321,,,,"KEEP text: the stock did not trade within 10 days of the ex-date, so the price cannot confirm it (look at it if the stock matters)",
+530871,CHEMBOND,2016-09-06,SPLIT,0.5,0.6321,,,,"KEEP text: the stock did not trade within 10 days of the ex-date, so the price cannot confirm it (look at it if the stock matters)",
 502448,ROLLT,2016-09-22,SPLIT,0.5,0.4146,,,,"KEEP text: the stock did not trade within 10 days of the ex-date, so the price cannot confirm it (look at it if the stock matters)",
 507779,KANPRPLA,2016-09-23,BONUS,0.6667,0.8746,,,,"KEEP text: the stock did not trade within 10 days of the ex-date, so the price cannot confirm it (look at it if the stock matters)",
 537524,VIAANINDUS,2016-09-27,BONUS,0.3333,0.0763,,,,"KEEP text: the stock did not trade within 10 days of the ex-date, so the price cannot confirm it (look at it if the stock matters)",

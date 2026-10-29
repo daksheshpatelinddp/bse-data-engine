@@ -67,7 +67,6 @@ scrip_code,company,ex_date,type,purpose,status,applied,price_gap,note
 532926,JYOTHYLAB,2008-12-12,SPLIT,Stock Split,ok,0.18181818181818182,0.186755239008355,ESTIMATE from the price drop on 2008-12-12 (market-adjusted gap 0.1868)
 505400,TEXINFRA,2009-01-01,SPLIT,Stock Split,ok,0.1,0.10078494073231523,ESTIMATE from the price drop on 2009-01-01 (market-adjusted gap 0.1008)
 517447,RSSOFTWARE,2010-06-21,BONUS,Bonus issue 28100,ok,0.8333333333333334,0.8309476981351981,ESTIMATE from the price drop on 2010-06-21 (market-adjusted gap 0.8309)
-530871,CHEMBOND,2016-09-06,SPLIT,Sub Division of Equity shares,ok,0.6321178821178821,,ratio taken from BSE's reference price
 539686,KPEL,2017-03-15,BONUS,Bonus issue 1.501,skip,,,"no ratio in the text, BSE reference price not adjusted and no clear price drop on the ex-date"
 540545,GKL,2019-10-04,BONUS,Bonus issue,ok,0.875,0.88,ESTIMATE from the price drop on 2019-10-04 (market-adjusted gap 0.8800)
 541152,GOYALALUM,2021-10-13,BONUS,Bonus issue 44100,ok,0.6666666666666666,0.6574764865053646,ESTIMATE from the price drop on 2021-10-13 (market-adjusted gap 0.6575)

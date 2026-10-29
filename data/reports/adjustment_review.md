@@ -2,7 +2,7 @@
 
 Events estimated from the price drop (BSE reference price was not adjusted): **804**
 
-## 1. Split / bonus without a ratio in the text (72)
+## 1. Split / bonus without a ratio in the text (71)
 
 `applied` = factor used, empty = event left out.
 
@@ -76,7 +76,6 @@ Events estimated from the price drop (BSE reference price was not adjusted): **8
 | 532926 | JYOTHYLAB | 2008-12-12 | SPLIT | 0.1818 | 0.1868 | ESTIMATE from the price drop on 2008-12-12 (market-adjusted gap 0.1868) |
 | 505400 | TEXINFRA | 2009-01-01 | SPLIT | 0.1000 | 0.1008 | ESTIMATE from the price drop on 2009-01-01 (market-adjusted gap 0.1008) |
 | 517447 | RSSOFTWARE | 2010-06-21 | BONUS | 0.8333 | 0.8309 | ESTIMATE from the price drop on 2010-06-21 (market-adjusted gap 0.8309) |
-| 530871 | CHEMBOND | 2016-09-06 | SPLIT | 0.6321 |  | ratio taken from BSE's reference price |
 | 539686 | KPEL | 2017-03-15 | BONUS |  |  | no ratio in the text, BSE reference price not adjusted and no clear price drop on the ex-date |
 | 540545 | GKL | 2019-10-04 | BONUS | 0.8750 | 0.8800 | ESTIMATE from the price drop on 2019-10-04 (market-adjusted gap 0.8800) |
 | 541152 | GOYALALUM | 2021-10-13 | BONUS | 0.6667 | 0.6575 | ESTIMATE from the price drop on 2021-10-13 (market-adjusted gap 0.6575) |
@@ -98,7 +97,7 @@ Details and ready-to-paste overrides: review_disagreements.csv
 | 538212 | SHARPINV | 2015-12-02 | SPLIT | 0.1000 | 0.0215 |  | KEEP text: the stock did not trade within 10 days of the ex-date, so the price cannot confirm it (look at it if the stock matters) |
 | 526263 | MOLDTECH | 2016-02-17 | SPLIT | 0.2000 | 0.1112 |  | KEEP text: the stock did not trade within 10 days of the ex-date, so the price cannot confirm it (look at it if the stock matters) |
 | 501298 | INDPRUD | 2016-07-19 | BONUS | 0.3333 | 0.6030 |  | KEEP text: the stock did not trade within 10 days of the ex-date, so the price cannot confirm it (look at it if the stock matters) |
-| 530871 | CHEMBOND | 2016-09-06 | SPLIT | 0.3161 | 0.6321 |  | KEEP text: the stock did not trade within 10 days of the ex-date, so the price cannot confirm it (look at it if the stock matters) |
+| 530871 | CHEMBOND | 2016-09-06 | SPLIT | 0.5000 | 0.6321 |  | KEEP text: the stock did not trade within 10 days of the ex-date, so the price cannot confirm it (look at it if the stock matters) |
 | 502448 | ROLLT | 2016-09-22 | SPLIT | 0.5000 | 0.4146 |  | KEEP text: the stock did not trade within 10 days of the ex-date, so the price cannot confirm it (look at it if the stock matters) |
 | 507779 | KANPRPLA | 2016-09-23 | BONUS | 0.6667 | 0.8746 |  | KEEP text: the stock did not trade within 10 days of the ex-date, so the price cannot confirm it (look at it if the stock matters) |
 | 537524 | VIAANINDUS | 2016-09-27 | BONUS | 0.3333 | 0.0763 |  | KEEP text: the stock did not trade within 10 days of the ex-date, so the price cannot confirm it (look at it if the stock matters) |
