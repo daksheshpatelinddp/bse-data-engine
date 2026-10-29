@@ -1,1 +1,6 @@
-{}
+{
+  "508494": [
+    {"ex_date": "2013-03-21", "factor": 0.9062, "replace": true,
+     "description": "Warren Tea bonus 7:10: BSE's reference price (0.9062) and the real price gap (0.9014) agree, the text ratio 0.5882 does not"}
+  ]
+}
