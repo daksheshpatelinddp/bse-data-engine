@@ -71,6 +71,7 @@ def fake_fetch(session, dt, date_str):
 
 # ---- corporate action export you would drop into data/corporate_actions/ ------------------------------------------------
 pd.DataFrame([["500001", "AAA LTD", "03-Feb-2025", "Stock  Split From Rs.10/- To Rs.5/-"],
+              ["500001", "AAA LTD", "03-Feb-2025", "Stock Split"],      # the same split listed again WITHOUT a ratio (another BSE file): must not be applied twice
               ["500001", "AAA LTD", "03-Mar-2025", "Dividend - Rs. - 5.0000"],
               ["500003", "CCC", "10-Feb-2025", "Spin Off"],
               ["500004", "DDD", "17-Feb-2025", "Bonus issue"],          # BSE exports often carry no ratio: BSE's reference price (80 -> 40) gives 0.5
