@@ -7,6 +7,10 @@ Hand-calculated expectations (raw prices 'raw', everything adjusted to today's s
   500002 BBB : renamed OLDNAME -> NEWNAME on 2025-01-15 (same scrip code): ONE history under NEWNAME
   500003 CCC : spin-off ex 2025-02-10, close before 200, BSE reference price (PREVCLOSE) on ex-date 150 -> factor 0.75 -> old close 150
   500004 DDD : "Bonus issue 1:1" ex 2025-02-17 -> factor 0.5: raw 80 -> 40
+  500007 FFF : spin-off ex 2025-02-12, BSE did NOT adjust PREVCLOSE (=last close 100), price opens at 80 -> ESTIMATE 0.8 -> old close 80
+  500008 GGG : "Bonus issue" without ratio, PREVCLOSE not adjusted, price 90 -> 45 on 2025-02-14 -> ESTIMATE snaps to 0.5 -> old close 45
+  500009 HHH : "Bonus issue 1:1" (text 0.5) but the price only fell 100 -> 95 and BSE's PREVCLOSE says 95: DISAGREEMENT (text used, review file says IGNORE?)
+  500010 III : rights issue ex 2025-02-19, PREVCLOSE not adjusted, price 50 -> 49.5 -> ESTIMATE 0.99 -> old close 49.5
   500005 EEE : raw 10; dividend Re1 ex 2025-04-02 (announced later) -> waits for the weekly run, then 10 * 0.9 = 9.0
 """
 import io, json, os, shutil, sys, tempfile
@@ -23,7 +27,7 @@ except ImportError:
 
 tmp = tempfile.mkdtemp(prefix="bse_e2e_")
 DATA = os.path.join(tmp, "data")
-os.environ.update(DATA_DIR=DATA, HIST_BUCKET_SIZE="2", START_DATE="2024-12-02", END_DATE="2025-03-31",
+os.environ.update(MARKET_MIN_STOCKS="3", DATA_DIR=DATA, HIST_BUCKET_SIZE="2", START_DATE="2024-12-02", END_DATE="2025-03-31",
                   SPECIAL_SESSIONS_FILE=os.path.join(tmp, "none.txt"), REQUEST_DELAY="0")
 CA = os.path.join(DATA, "corporate_actions"); os.makedirs(CA)
 import actions, build, common, fetch, rawstore, pio
@@ -38,19 +42,26 @@ def raw_close(code, d):
     if code == "500002": return 30.0
     if code == "500003": return 200.0 if d < "2025-02-10" else 150.0
     if code == "500004": return 80.0 if d < "2025-02-17" else 40.0
+    if code == "500007": return 100.0 if d < "2025-02-12" else 80.0
+    if code == "500008": return 90.0 if d < "2025-02-14" else 45.0
+    if code == "500009": return 100.0 if d < "2025-02-17" else 95.0
+    if code == "500010": return 50.0 if d < "2025-02-19" else 49.5
     return 10.0
 
 def fake_fetch(session, dt, date_str):
     if dt.weekday() >= 5 or date_str == "2025-01-28":                     # weekend / holiday: BSE has no file
         return None, None, "HTTP 404", {}
     rows = []
-    names = {"500001": "AAA", "500002": "NEWNAME", "500003": "CCC", "500004": "DDD", "500005": "EEE"}
+    names = {"500001": "AAA", "500002": "NEWNAME", "500003": "CCC", "500004": "DDD", "500005": "EEE", "500007": "FFF", "500008": "GGG", "500009": "HHH", "500010": "III"}
     for code in names:
         c = raw_close(code, date_str)
         pc = c                                                                # normal day: PREVCLOSE == yesterday's close (same price level in this fake)
         if code == "500001" and date_str == "2025-02-03": pc = 50.0           # BSE adjusts the reference price for the split
         if code == "500003" and date_str == "2025-02-10": pc = 150.0          # ... and for the spin-off
         if code == "500004" and date_str == "2025-02-17": pc = 40.0           # ... and for the bonus
+        if code == "500007" and date_str == "2025-02-12": pc = 100.0          # ... but NOT for these: PREVCLOSE is the plain last close
+        if code == "500008" and date_str == "2025-02-14": pc = 90.0
+        if code == "500010" and date_str == "2025-02-19": pc = 50.0
         sym = "OLDNAME" if (code == "500002" and date_str < "2025-01-15") else names[code]
         rows.append(dict(scrip_code=code, symbol=sym, series="A", open=c, high=c + 1, low=c - 1, close=c, prev_close=pc, volume=1000, isin="INE000A01010", name=sym))
     rows.append(dict(scrip_code="500006", symbol="DEBT", series="F", open=1, high=1, low=1, close=1, prev_close=1, volume=1, isin="INE000A07010", name="DEBT"))
@@ -63,6 +74,10 @@ pd.DataFrame([["500001", "AAA LTD", "03-Feb-2025", "Stock  Split From Rs.10/- To
               ["500001", "AAA LTD", "03-Mar-2025", "Dividend - Rs. - 5.0000"],
               ["500003", "CCC", "10-Feb-2025", "Spin Off"],
               ["500004", "DDD", "17-Feb-2025", "Bonus issue"],          # BSE exports often carry no ratio: BSE's reference price (80 -> 40) gives 0.5
+              ["500007", "FFF", "12-Feb-2025", "Spin Off"],
+              ["500008", "GGG", "14-Feb-2025", "Bonus issue"],
+              ["500009", "HHH", "17-Feb-2025", "Bonus issue 1:1"],
+              ["500010", "III", "19-Feb-2025", "Right Issue of Equity Shares"],
               ["599999", "UNKNOWN", "01-Feb-2025", "Bonus issue 1:1"]],
              columns=["Security Code", "Security Name", "Ex Date", "Purpose"]).to_csv(os.path.join(CA, "bse_export.csv"), index=False)
 
@@ -94,22 +109,32 @@ allp = pd.concat([pio.read_bytes(store.get(f"bse/{first}.parquet")), pio.read_by
 a = allp[allp.symbol == "AAA"].set_index("date")["close"]
 assert a["2024-12-02"] == 45.0 and a["2025-02-10"] == 45.0 and a["2025-03-31"] == 50.0 and a["2025-03-03"] == 50.0, a.loc[["2024-12-02", "2025-02-10", "2025-03-03", "2025-03-31"]].to_dict()
 assert allp[allp.symbol == "AAA"].set_index("date").loc["2024-12-02", "high"] == 45.45, "high = 101*0.45"
-assert set(allp.symbol) == {"AAA", "NEWNAME", "CCC", "DDD", "EEE"}, set(allp.symbol)
+assert set(allp.symbol) == {"AAA", "NEWNAME", "CCC", "DDD", "EEE", "FFF", "GGG", "HHH", "III"}, set(allp.symbol)
 b = allp[allp.symbol == "NEWNAME"]; assert len(b) == allp[allp.symbol == "EEE"].shape[0] and (b.close == 30).all(), "rename joined into one history"
 assert allp[allp.symbol == "CCC"].set_index("date")["close"]["2024-12-02"] == 150.0
 d = allp[allp.symbol == "DDD"].set_index("date")["close"]; assert d["2024-12-02"] == 40.0 and d["2025-03-31"] == 40.0
 assert list(pio.read_bytes(store.get(f"bse/{cur}.parquet")).columns) == ["symbol", "date", "open", "high", "low", "close", "volume", "delivery"]
 assert not [k for k, _, _ in store.list("bse/") if "/raw/" in k or k.startswith("bse/raw")], "raw prices must never reach R2"
+cl = lambda sym: allp[allp.symbol == sym].set_index("date")["close"]
+assert cl("FFF")["2024-12-02"] == 80.0 and cl("FFF")["2025-03-31"] == 80.0, "spin-off estimated from the price drop"
+assert cl("GGG")["2024-12-02"] == 45.0, "bonus without ratio estimated + snapped to 0.5"
+assert cl("HHH")["2024-12-02"] == 50.0 and cl("HHH")["2025-03-31"] == 95.0, "text ratio used for the disagreement"
+assert cl("III")["2024-12-02"] == 49.5, "listed rights issue: any drop is applied, like the NSE engine"
+rev = os.path.join(DATA, "reports")
+dgf = pd.read_csv(os.path.join(rev, "review_disagreements.csv"), dtype=str); assert list(dgf.scrip_code) == ["500009"] and dgf.suggestion[0].startswith("IGNORE?"), dgf.to_dict("records")
+nrf = pd.read_csv(os.path.join(rev, "review_no_ratio.csv"), dtype=str); assert {"500004", "500008"} <= set(nrf.scrip_code) and "ESTIMATE" in " ".join(nrf.note.fillna("")), nrf.to_dict("records")
+drf = pd.read_csv(os.path.join(rev, "review_demerger_rights.csv"), dtype=str); assert set(drf.scrip_code) == {"500003", "500007", "500010"}
+assert "500009" in open(os.path.join(rev, "adjustment_review.md"), encoding="utf-8").read()
 print("period files ok (split + dividend + spin-off + bonus + rename)")
 
 man = json.loads(store.get("bse/manifest.json"))
-assert man["format"] == 2 and man["currentPeriod"] == cur and len(man["buckets"]) == 3 and man["aliases"]["OLDNAME"] == "NEWNAME" and man["aliases"]["500001"] == "AAA", man["aliases"]
+assert man["format"] == 2 and man["currentPeriod"] == cur and len(man["buckets"]) == 5 and man["aliases"]["OLDNAME"] == "NEWNAME" and man["aliases"]["500001"] == "AAA", man["aliases"]
 bname = [n for n, v in man["buckets"].items() if "AAA" in v["symbols"]][0]
 off, ln, n = man["packs"]["buckets"][bname]["idx"]["AAA"]
 blk = decode_pack_block(store.get(f"bse/{man['packs']['path']}/{bname}.pack")[off:off + ln])
 assert len(blk["dates"]) == n and abs(blk["close"][0] - 45.0) < 1e-9, blk["close"][:3]
 rec = json.loads(store.get("bse/recent.json")); assert "AAA" in rec["idx"] and "NEWNAME" in rec["idx"]
-sy = json.loads(store.get("bse/symbols.json")); assert sorted(sy["symbols"]) == ["AAA", "CCC", "DDD", "EEE", "NEWNAME"], sy
+sy = json.loads(store.get("bse/symbols.json")); assert sorted(sy["symbols"]) == ["AAA", "CCC", "DDD", "EEE", "FFF", "GGG", "HHH", "III", "NEWNAME"], sy
 sc = json.loads(store.get("bse/scrips.json")); assert sc["AAA"]["code"] == "500001"
 print("manifest / packs / recent / symbols ok; first build write operations:", build.PUTS["n"])
 
