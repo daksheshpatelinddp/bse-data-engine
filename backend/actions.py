@@ -216,6 +216,10 @@ def expand_events(ev):
     df = pd.DataFrame(rows, columns=["scrip_code", "ex_date", "type", "parsed", "amount", "purpose"])
     if df.empty:
         return df
+    # the same split/bonus often sits in two BSE files (one with the ratio in its text, one with only "Stock Split"): keep the one with the ratio, never both
+    has_ratio = df[df["parsed"].notna() & df["type"].isin(["SPLIT", "BONUS"])][["scrip_code", "ex_date", "type"]].drop_duplicates().assign(_r=True)
+    df = df.merge(has_ratio, on=["scrip_code", "ex_date", "type"], how="left")
+    df = df[~(df["parsed"].isna() & df["_r"].fillna(False).astype(bool))].drop(columns="_r")
     df["_k"] = df["amount"].fillna(0).round(4).astype(str) + df["parsed"].fillna(0).round(6).astype(str)
     return df.drop_duplicates(["scrip_code", "ex_date", "type", "_k"]).drop(columns="_k").sort_values(["ex_date", "scrip_code"]).reset_index(drop=True)
 
